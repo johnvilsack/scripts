@@ -1,18 +1,24 @@
-echo "Download and Install Nix"
-sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install)
+#!/bin/bash
 
-echo "Create directory for Nix configuration"
-mkdir -p ~/.config/nix
+echo "Installing Xcode Command Line Tools..."
+xcode-select --install 2>/dev/null || echo "Already installed"
+until xcode-select -p &>/dev/null; do sleep 5; done
 
-echo "Create Nix configuration file"
-echo "experimental-features = nix-command flakes" >> ~/.config/nix/nix.conf
+echo "Installing Rosetta (for Apple Silicon)..."
+softwareupdate --install-rosetta --agree-to-license || echo "Rosetta may already be installed"
 
-echo "Set Nix Path"
-echo 'export PATH=$PATH:/run/current-system/sw/bin/darwin-rebuild' >> ~/.zshrc
-source ~/.zshrc
+echo "Installing Nix..."
+sh <(curl --proto '=https' --tlsv1.2 -sSfL https://nixos.org/nix/install)
 
-echo "Download Flake"
-curl "https://raw.githubusercontent.com/johnvilsack/scripts/refs/heads/main/shell/setup/mac/nix/flake.nix" -o "~/.config/nix/flake.nix"
+echo "Sourcing Nix profile..."
+. "$HOME/.nix-profile/etc/profile.d/nix.sh"
 
-echo "Build Flake"
-darwin-rebuild switch  --flake ~/.config/nix#JV-Macbook
+echo "Enabling flakes support..."
+mkdir -p "$HOME/.config/nix"
+echo "experimental-features = nix-command flakes" > "$HOME/.config/nix/nix.conf"
+
+echo "Fetching Nix flake..."
+curl -sSL "https://raw.githubusercontent.com/johnvilsack/scripts/refs/heads/main/shell/setup/mac/nix/flake.nix" -o "$HOME/.config/nix/flake.nix"
+
+echo "Running darwin-rebuild..."
+darwin-rebuild switch --flake "$HOME/.config/nix#JV-Macbook"

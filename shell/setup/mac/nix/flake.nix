@@ -33,10 +33,10 @@
           pkgs.gum
         ];
 
-        fonts.packages = [ 
-          pkgs.nerd-fonts.fira-code
-          pkgs.roboto 
-        ];
+        # fonts.packages = [ 
+        #   pkgs.nerd-fonts.fira-code
+        #   pkgs.roboto 
+        # ];
 
         homebrew = {
           enable = true;
@@ -62,6 +62,8 @@
             "crystalfetch"
             "bruno"
             "chatgpt"
+            "font-fira-code"
+            "font-roboto"
           ];
           masApps = {
             #"Microsoft365" = 1450038993;
