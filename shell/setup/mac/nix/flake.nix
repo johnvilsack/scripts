@@ -10,7 +10,7 @@
 
   outputs = inputs@{ self, nix-darwin, nixpkgs, nix-homebrew }:
     let
-      configuration = { pkgs, config, ... }: {
+      configuration = { pkgs, config, lib, ... }: {
 
         nixpkgs.config.allowUnfree = true;
 
@@ -31,6 +31,8 @@
           pkgs.gum
           pkgs.nerd-fonts.fira-code
           pkgs.roboto
+          pkgs.git
+          pkgs.eza
         ];
 
         fonts.packages = [
@@ -79,6 +81,51 @@
           onActivation.upgrade = true;
         };
 
+        programs.zsh = {
+          enable = true;
+          enableCompletion = true;
+          interactiveShellInit = ''
+            export PATH="$HOME/.local/bin:$PATH"
+          '';
+        };
+
+        system.defaults = {
+          finder = {
+            NewWindowTarget = "Other";
+            NewWindowTargetPath = "file://" + (if builtins ? getEnv && builtins.getEnv "HOME" != "" then builtins.getEnv "HOME" else "/Users/johnv") + "/";
+            FXDefaultSearchScope = "SCcf";
+            ShowPathbar = true;
+            _FXSortFoldersFirst = true;
+            AppleShowAllFiles = true;
+            ShowStatusBar = true;
+            QuitMenuItem = true;
+          };
+
+          dock = {
+            autohide = true;
+            show-recents = false;
+            tilesize = 36;
+          };
+
+          trackpad = {
+            Clicking = true;
+            TrackpadRightClick = true;
+            TrackpadThreeFingerDrag = true;
+          };
+
+          NSGlobalDomain = {
+            AppleInterfaceStyle = "Dark";
+            AppleShowAllExtensions = true;
+            NSAutomaticSpellingCorrectionEnabled = false;
+            NSAutomaticCapitalizationEnabled = false;
+            NSAutomaticPeriodSubstitutionEnabled = false;
+            NSAutomaticQuoteSubstitutionEnabled = false;
+            InitialKeyRepeat = 15;
+            KeyRepeat = 2;
+            NSAutomaticDashSubstitutionEnabled = false;
+          };
+        };
+
         system.activationScripts.applications.text = let
           env = pkgs.buildEnv {
             name = "system-applications";
@@ -96,25 +143,6 @@
             ${pkgs.mkalias}/bin/mkalias "$src" "/Applications/Nix Apps/$app_name"
           done
         '';
-
-        system.defaults = {
-          finder = {
-            NewWindowTarget = "Other";
-            NewWindowTargetPath = "file://" + (if builtins ? getEnv && builtins.getEnv "HOME" != "" then builtins.getEnv "HOME" else "/Users/johnv") + "/";
-            FXDefaultSearchScope = "SCcf";
-            ShowPathbar = true;
-            _FXSortFoldersFirst = true;
-          };
-
-          NSGlobalDomain = {
-            AppleInterfaceStyle = "Dark";
-            AppleShowAllExtensions = true;
-            NSAutomaticSpellingCorrectionEnabled = false;
-            NSAutomaticCapitalizationEnabled = false;
-            NSAutomaticPeriodSubstitutionEnabled = false;
-            NSAutomaticQuoteSubstitutionEnabled = false;
-          };
-        };
 
         nix.settings.experimental-features = "nix-command flakes";
 
