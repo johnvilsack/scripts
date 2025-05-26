@@ -14,8 +14,6 @@
 
         nixpkgs.config.allowUnfree = true;
 
-        # List packages installed in system profile. To search by name, run:
-        # $ nix-env -qaP | grep wget
         environment.systemPackages = [
           pkgs.neofetch
           pkgs.mkalias
@@ -31,16 +29,19 @@
           pkgs.chezmoi
           pkgs.gh
           pkgs.gum
+          pkgs.nerd-fonts.fira-code
+          pkgs.roboto
         ];
 
-        # fonts.packages = [ 
-        #   pkgs.nerd-fonts.fira-code
-        #   pkgs.roboto 
-        # ];
+        fonts.packages = [
+          pkgs.nerd-fonts.fira-code
+          pkgs.roboto
+        ];
 
         homebrew = {
           enable = true;
-          brews = [ 
+          taps = [ ];
+          brews = [
             "mas"
             "ollama"
             "node"
@@ -62,13 +63,8 @@
             "crystalfetch"
             "bruno"
             "chatgpt"
-            "font-fira-code"
-            "font-roboto"
           ];
           masApps = {
-            #"Microsoft365" = 1450038993;
-            # 1password out of date
-            # onedrive loses functionality
             "1Password Extension" = 1569813296;
             "Microsoft Word" = 462054704;
             "Microsoft Excel" = 462058435;
@@ -82,6 +78,7 @@
           onActivation.autoUpdate = true;
           onActivation.upgrade = true;
         };
+
         system.activationScripts.applications.text = let
           env = pkgs.buildEnv {
             name = "system-applications";
@@ -89,7 +86,6 @@
             pathsToLink = "/Applications";
           };
         in pkgs.lib.mkForce ''
-          # Set up applications.
           echo "setting up /Applications..." >&2
           rm -rf /Applications/Nix\ Apps
           mkdir -p /Applications/Nix\ Apps
@@ -102,43 +98,32 @@
         '';
 
         system.defaults = {
-          dock.autohide = true;
-          #dock.persistent-apps = [
-            #{ app = "/System/Applications/Safari.app";#}
-            #{ app = "{$pkgs._1password-gui}/Applications/1Password.app";
-            #}
-            #"${pkgs.alacritty}/Applications/Alacritty.app"
-            #"/System/Applications/Nix\ Apps/1Password.app"
-            #"/System/Applications/Nix\ Apps/Discord.app"
-            #"/System/Applications/Nix\ Apps/Visual\ Studio\ Code.app"
-            #"/System/Applications/Nix\ Apps/Warp.app"
-            #"/System/Applications/Github Desktop.app"
-            #"/System/Applications/Safari.app"
-            #"/System/Applications/Calendar.app"
-          #];
+          finder = {
+            NewWindowTarget = "Other";
+            NewWindowTargetPath = "file://" + (if builtins ? getEnv && builtins.getEnv "HOME" != "" then builtins.getEnv "HOME" else "/Users/johnv") + "/";
+            FXDefaultSearchScope = "SCcf";
+            ShowPathbar = true;
+            _FXSortFoldersFirst = true;
+          };
 
-          NSGlobalDomain.AppleInterfaceStyle = "Dark";
+          NSGlobalDomain = {
+            AppleInterfaceStyle = "Dark";
+            AppleShowAllExtensions = true;
+            NSAutomaticSpellingCorrectionEnabled = false;
+            NSAutomaticCapitalizationEnabled = false;
+            NSAutomaticPeriodSubstitutionEnabled = false;
+            NSAutomaticQuoteSubstitutionEnabled = false;
+          };
         };
 
-        # Necessary for using flakes on this system.
         nix.settings.experimental-features = "nix-command flakes";
 
-        # Enable alternative shell support in nix-darwin.
-        # programs.fish.enable = true;
-
-        # Set Git commit hash for darwin-version.
         system.configurationRevision = self.rev or self.dirtyRev or null;
-
-        # Used for backwards compatibility, please read the changelog before changing.
-        # $ darwin-rebuild changelog
         system.stateVersion = 6;
-
-        # The platform the configuration will be used on.
         nixpkgs.hostPlatform = "aarch64-darwin";
       };
+
     in {
-      # Build darwin flake using:
-      # $ darwin-rebuild build --flake .#simple
       darwinConfigurations."JV-Macbook" = nix-darwin.lib.darwinSystem {
         modules = [
           configuration
