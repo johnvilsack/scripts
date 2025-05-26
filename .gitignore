@@ -1,1 +1,5 @@
 .DS_Store
+shell/google/sorted_files.txt
+shell/google/credentials.json
+shell/google/files.json
+shell/google/token.json
