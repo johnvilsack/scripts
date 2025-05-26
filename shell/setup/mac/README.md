@@ -1,0 +1,1 @@
+curl -o my_script.sh "https://raw.githubusercontent.com/username/repo/branch/path/to/your/script.sh"
