@@ -34,3 +34,9 @@ curl -sSL "https://raw.githubusercontent.com/johnvilsack/scripts/refs/heads/main
 
 echo "Running darwin-rebuild..."
 darwin-rebuild switch --flake "$HOME/.config/nix#JV-Macbook"
+
+echo "Cloning scripts repository to ~/.script..."
+git clone "https://github.com/johnvilsack/scripts.git" "$HOME/.script"
+
+echo "Making all .sh and .ps1 scripts executable..."
+find "$HOME/.script" -type f \( -name "*.sh" -o -name "*.ps1" \) -exec chmod +x {} \;
