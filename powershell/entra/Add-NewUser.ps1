@@ -325,4 +325,13 @@ if ($NewUserId) {
     Write-Host "Azure AD Portal:"
     Write-Host "  User Overview: https://aad.portal.azure.com/#view/Microsoft_AAD_UsersAndTenants/UserProfileMenuBlade/~/overview/userId/$NewUserId/hidePreviewBanner~/true"
     Write-Host "--------------------------"
+    Write-Host
+    Write-Host "Cisco DUO:"
+    Write-Host "  https://admin-493d74ec.duosecurity.com/"
+    Write-Host
+    Write-Host "Acumatica:"
+    Write-Host "  https://shippers-supply.acumatica.com/" 
+    Write-Host
+    Write-Host "RingCentral:"
+    Write-Host "  https://service.ringcentral.com/" 
 }
