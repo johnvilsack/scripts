@@ -65,6 +65,7 @@
             "crystalfetch"
             "bruno"
             "chatgpt"
+            "windsurf"
           ];
           masApps = {
             "1Password Extension" = 1569813296;
