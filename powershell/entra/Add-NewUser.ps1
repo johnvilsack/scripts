@@ -414,4 +414,8 @@ if ($NewUserId) {
     Write-Host "Sharepoint Settings:"
     Write-Host "  https://tinyurl.com/kcr8b8tw"
     Write-Host
+    Write-Host "PowerBI RLS"
+    Write-Host "  https://tinyurl.com/4sj6eaxe"
+    Write-Host
+
 }
