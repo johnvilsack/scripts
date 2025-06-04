@@ -1,5 +1,10 @@
 #Requires -Modules Microsoft.Graph.Authentication, Microsoft.Graph.Groups, Microsoft.Graph.Identity.DirectoryManagement, Microsoft.Graph.Users, Microsoft.Graph.DeviceManagement
 
+param(
+    [switch]$upn
+)
+Write-Host "Invoke with -upn to list only email addresses"
+
 # --- Configuration ---
 $Global:EntraGroups = @(
     "Win11_Ring_0",
@@ -125,7 +130,6 @@ try {
             $lastSync = "N/A"
             $featureSource = $entraOS
 
-            # Correct Entra Device ID for Intune match (this is the fix)
             $intuneDev = Get-MgDeviceManagementManagedDevice -Filter "azureADDeviceId eq '$($deviceDetails.DeviceId)'" -Top 1 -ErrorAction SilentlyContinue
             if ($intuneDev) {
                 $intuneOS = $intuneDev.OsVersion
@@ -151,6 +155,18 @@ try {
     }
 
     Write-Progress -Activity "Processing Devices" -Completed
+
+    if ($upn) {
+        $report | Where-Object { $_.UserPrincipalName -ne "<Not Found>" } | ForEach-Object {
+            if ($_.WindowsFeatureVersion -eq "Windows 11 (24H2)") {
+                Write-Host $_.UserPrincipalName -ForegroundColor Green
+            } else {
+                Write-Host $_.UserPrincipalName
+            }
+        }
+        Exit 0
+    }
+
     Clear-Host
     Write-Host "--- Device Report for $groupName ---" -ForegroundColor Cyan
 
