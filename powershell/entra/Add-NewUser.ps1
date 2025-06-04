@@ -1,315 +1,385 @@
 <#
 .SYNOPSIS
-    Creates and sets up a new user in Microsoft 365 and Active Directory (Entra ID).
+    Creates and sets up a new user in Microsoft 365/Entra ID, ensuring license + group assignment occurs before waiting for mailbox provisioning.
 .DESCRIPTION
-    Run with -TestMode to simulate user creation without making changes.
+    Run with -TestMode to simulate all operations without making tenant changes.
 
-    This script prompts for new user details, creates the user in Microsoft 365,
-    sets the password, adds the user to specified groups (including the licensing group),
-    waits indefinitely for mailbox provisioning, updates their attributes in Entra ID
-    (skipping blank values), and adds them to the "All Employees" Exchange DL.
-    It confirms the Display Name and UPN with the user, stripping the domain if
-    accidentally entered for the UPN, and re-checks UPN uniqueness upon confirmation.
-    It also displays module connection status at the beginning, provides formatted quick
-    access links at the end, and times the execution.
+    1. Prompt for First Name, Last Name, and other attributes.
+    2. Auto‐concatenate DisplayName as "FirstName LastName".
+    3. Check that the appropriate license SKU (O365_BUSINESS_PREMIUM or SPB) has available seats; abort if none remain.
+    4. Create the user via New-MgUser (including required -MailNickname).
+    5. Immediately set UsageLocation="US".
+    6. Assign license (direct or via group) and add user to all required groups.
+    7. Wait for the Exchange mailbox to appear before adding to the “All Employees” DL.
+    8. Update any remaining Entra ID attributes (JobTitle, Department, MobilePhone).
 .NOTES
-    Requires the Microsoft Graph PowerShell SDK and Exchange Online PowerShell Module.
-    Ensure you are connected to both before running this script.
+    • Requires Microsoft.Graph PowerShell SDK and ExchangeOnlineManagement modules.
+    • DisplayName is generated automatically per Graph recommendations.
+    • If any required SKU has zero available licenses, the script aborts before creating the user.
 #>
-param(
-    [Switch]$TestMode
+
+param (
+    [switch]$TestMode
 )
 
 # --- Start Timer ---
 $ScriptStartTime = Get-Date
 
-# --- Module Connection Status ---
-Write-Host "--- Module Connection Status ---"
-$GraphConnected = $false
+# --- Load + Connect Modules ---
+Write-Host "--- Checking for Required Modules and Connections ---"
+$GraphConnected          = $false
+$ExchangeOnlineConnected = $false
+
 try {
+    if (-not (Get-Module -ListAvailable -Name Microsoft.Graph)) {
+        Write-Host "Installing Microsoft.Graph module..."
+        Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force
+    }
     Write-Host "Connecting to Microsoft Graph..."
-    Connect-MgGraph -Scopes "User.ReadWrite.All", "Group.Read.All", "GroupMember.ReadWrite.All" -ErrorAction Stop
-    Write-Host "Microsoft.Graph - OK"
+    Import-Module Microsoft.Graph
+    Connect-MgGraph -Verbose -Scopes "User.ReadWrite.All","Group.Read.All","GroupMember.ReadWrite.All","Organization.Read.All" -ErrorAction Stop
+    Write-Host "Connected to Microsoft Graph." 
     $GraphConnected = $true
 } catch {
-    Write-Error "Failed to connect to Microsoft Graph: $($_.Exception.Message)"
+    Write-Error "Unable to connect to Microsoft Graph: $($_.Exception.Message). Exiting."
     exit 1
 }
 
-$ExchangeOnlineConnected = $false
 try {
+    if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
+        Write-Host "Installing ExchangeOnlineManagement module..."
+        Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force
+    }
     Write-Host "Connecting to Exchange Online..."
+    Import-Module ExchangeOnlineManagement
     Connect-ExchangeOnline -ErrorAction Stop
-    Write-Host "ExchangeOnlineManagement - OK"
+    Write-Host "Connected to Exchange Online."
     $ExchangeOnlineConnected = $true
 } catch {
-    Write-Warning "Failed to connect to Exchange Online: $($_.Exception.Message)"
-}
-Write-Host "-----------------------------"
-
-if (-not $GraphConnected) {
-    Write-Error "Unable to proceed as connection to Microsoft Graph failed."
-    exit 1
+    Write-Warning "Unable to connect to Exchange Online: $($_.Exception.Message). Skipping DL steps."
 }
 
-# --- Prompt for First and Last Name ---
-$FirstName = Read-Host "Enter First Name"
-$LastName = Read-Host "Enter Last Name"
+# --- Prompt for Core User Details ---
+$FirstName  = Read-Host "Enter First Name"
+$LastName   = Read-Host "Enter Last Name"
 
-# --- Confirm Display Name ---
+# Automatically build DisplayName from First + Last
 $DisplayName = "$FirstName $LastName"
-do {
-    Write-Host "Proposed Display Name: '$DisplayName'"
-    $ConfirmDisplayName = Read-Host "Is this correct? (Y/N)"
-    if ($ConfirmDisplayName.ToUpper() -eq "N") {
-        $DisplayName = Read-Host "Enter the desired Display Name"
-    } elseif ($ConfirmDisplayName.ToUpper() -ne "Y") {
-        Write-Warning "Invalid input. Please enter 'Y' or 'N'."
-    }
-} while ($ConfirmDisplayName.ToUpper() -ne "Y")
-Write-Host "Using Display Name: '$DisplayName'"
+Write-Host "DisplayName set to: '$DisplayName'"
 
-# --- Generate Initial User Principal Name (UPN) ---
-$InitialUPNPrefix = "$($FirstName[0])$LastName".ToLower()
-$UPNDomain = "shippers-supply.com"
-$UPNPrefix = $InitialUPNPrefix
-$UPN = "$UPNPrefix@$UPNDomain"
+# Generate UPN prefix and mailNickname (≤64 chars)
+$UPNPrefix    = ("$($FirstName[0])$LastName").ToLower()
+$UPNDomain    = "shippers-supply.com"
+$UPN          = "$UPNPrefix@$UPNDomain"
+$MailNickname = $UPNPrefix
 
-# --- Confirm UPN ---
 do {
-    Write-Host "Proposed User Principal Name: '$UPN'"
+    Write-Host "Proposed UPN: '$UPN'"
     $ConfirmUPN = Read-Host "Is this correct? (Y/N)"
     if ($ConfirmUPN.ToUpper() -eq "Y") {
-        # --- Check for UPN uniqueness on confirmation ---
         if (Get-MgUser -Filter "userPrincipalName eq '$UPN'") {
-            Write-Warning "The User Principal Name '$UPN' already exists. Please enter a different one."
-            $ConfirmUPN = "N" # Force the loop to continue
+            Write-Warning "The UPN '$UPN' already exists. Please choose another."
+            $ConfirmUPN = "N"
         }
     } elseif ($ConfirmUPN.ToUpper() -eq "N") {
-        $NewUPNInput = Read-Host "Enter the desired username (before @$UPNDomain)"
+        $NewUPNInput = Read-Host "Enter desired username (before '@$UPNDomain')"
         if (-not [string]::IsNullOrWhiteSpace($NewUPNInput)) {
-            # Strip off the domain if accidentally entered
-            $UPNPrefix = $NewUPNInput.ToLower().Replace("@$UPNDomain", "")
-            $UPN = "$UPNPrefix@$UPNDomain"
+            $UPNPrefix   = $NewUPNInput.ToLower().Replace("@$UPNDomain","")
+            $UPN         = "$UPNPrefix@$UPNDomain"
+            $MailNickname = $UPNPrefix
         } else {
-            Write-Warning "No new username provided. Please confirm or enter a new one."
+            Write-Warning "No username provided. Please confirm or enter a new one."
         }
     } else {
         Write-Warning "Invalid input. Please enter 'Y' or 'N'."
     }
 } while ($ConfirmUPN.ToUpper() -ne "Y")
-Write-Host "Using User Principal Name: '$UPN'"
 
-# --- Prompt for Remaining User Details ---
-$Title = Read-Host "Enter Title"
-$Department = Read-Host "Enter Department"
-$MobilePhone = Read-Host "Enter Mobile Phone"
+Write-Host "Using UPN: '$UPN' and mailNickname: '$MailNickname'"
 
-# --- Prompt for Password (Plain String) ---
-$Password = Read-Host -Prompt "Enter Temporary Password"
+$Password    = Read-Host "Enter Temporary Password" -AsSecureString
+$Title       = Read-Host "Enter Job Title"
+$Department  = Read-Host "Enter Department"
+$MobilePhone = Read-Host "Enter Mobile Phone Number (optional)"
 
-# --- Query and Select Printer Group ---
-Write-Host "--- Select Printer Group ---"
-$PrinterGroups = Get-MgGroup -Filter "startswith(displayName, 'Printer')" -All
+# --- Determine Required License SKU ---
+if ($Department -in @('Warehouse','Production')) {
+    # Non-computer users get O365_BUSINESS_PREMIUM directly
+    $LicensePartNumber = "O365_BUSINESS_PREMIUM"
+    Write-Host "Department '$Department' → will require SKU 'O365_BUSINESS_PREMIUM'."
+} else {
+    # Computer users receive SPB via group-based licensing (OneDrive Folder Redirect)
+    $LicensePartNumber = "SPB"
+    Write-Host "Department '$Department' → will require SKU 'SPB' (Microsoft 365 Business Premium)."
+}
+
+# --- Check License Availability Before Any Tenant Writes ---
+try {
+    if ($TestMode) {
+        Write-Host "[TEST MODE] Simulating license check for SKU '$LicensePartNumber'."
+        $AvailableLicenses = 1
+        Write-Host "[TEST MODE] Simulated AvailableLicenses = $AvailableLicenses."
+    } else {
+        $AllSkus        = Get-MgSubscribedSku -All
+        $TargetSkuObj   = $AllSkus | Where-Object { $_.SkuPartNumber -eq $LicensePartNumber }
+        if (-not $TargetSkuObj) {
+            Write-Error "SKU '$LicensePartNumber' not found in tenant. Exiting."
+            exit 1
+        }
+        $TotalPurchased    = $TargetSkuObj.PrepaidUnits.Enabled
+        $TotalConsumed     = $TargetSkuObj.ConsumedUnits
+        $AvailableLicenses = $TotalPurchased - $TotalConsumed
+        Write-Host "Found SKU '$LicensePartNumber': Purchased=$TotalPurchased, Consumed=$TotalConsumed, Available=$AvailableLicenses."
+
+        if ($AvailableLicenses -lt 1) {
+            Write-Error "No available licenses for SKU '$LicensePartNumber'. Aborting."
+            exit 1
+        }
+    }
+} catch {
+    Write-Error "Error during license-availability check: $($_.Exception.Message). Exiting."
+    exit 1
+}
+
+# --- Optional: Select Printer Group ---
+$PrinterGroups = Get-MgGroup -Filter "startswith(displayName,'Printer')" -All
 if ($PrinterGroups.Count -gt 0) {
-    for ($i = 0; $i -lt $PrinterGroups.Count; $i++) {
+    Write-Host "--- Select Printer Group ---"
+    for ($i=0; $i -lt $PrinterGroups.Count; $i++) {
         Write-Host "$($i+1). $($PrinterGroups[$i].DisplayName)"
     }
-    $Selection = Read-Host "Select the number of the Printer Group (or press Enter to skip)"
-    if ($Selection) {
-        if ($Selection -as [int] -gt 0 -and $Selection -as [int] -le $PrinterGroups.Count) {
-            $SelectedPrinterGroup = $PrinterGroups[$Selection -1]
-            Write-Host "Selected Printer Group: $($SelectedPrinterGroup.DisplayName)"
-        } else {
-            Write-Warning "Invalid printer group selection."
-            $SelectedPrinterGroup = $null
-        }
+    $Selection = Read-Host "Enter Printer Group number (or press Enter to skip)"
+    if ($Selection -as [int] -and $Selection -ge 1 -and $Selection -le $PrinterGroups.Count) {
+        $SelectedPrinterGroup = $PrinterGroups[$Selection - 1]
+        Write-Host "Selected Printer Group: $($SelectedPrinterGroup.DisplayName)"
     } else {
-        Write-Host "Skipping printer group selection."
+        Write-Warning "No valid selection; skipping printer group."
         $SelectedPrinterGroup = $null
     }
 } else {
-    Write-Warning "No printer groups found starting with 'Printer'."
+    Write-Warning "No Printer groups found; skipping."
     $SelectedPrinterGroup = $null
 }
 
-# --- Define Groups to Add (by Display Name) ---
+# --- Base Microsoft 365 Groups (All Users) ---
 $M365GroupsToAdd = @(
     "All Company Team",
     "DUO MFA",
-    "OneDrive Folder Redirect", # This group assigns the license
     "Shippers All Staff"
 )
 
-# --- Get the Exchange Distribution List ---
+# Computer users get the OneDrive Folder Redirect group to auto‐provision SPB
+if (-not ($Department -in @('Warehouse','Production'))) {
+    $M365GroupsToAdd += "OneDrive Folder Redirect"
+}
+
+# --- Locate Exchange Distribution List ---
 $ExchangeDLName = "All Employees"
 $AllEmployeesDL = $null
-try {
-    if ($ExchangeOnlineConnected) {
+if ($ExchangeOnlineConnected) {
+    try {
         $AllEmployeesDL = Get-DistributionGroup -Filter "DisplayName -eq '$ExchangeDLName'" -ErrorAction Stop
-        if (-not $AllEmployeesDL) {
-            Write-Warning "Could not find Exchange Distribution List '$ExchangeDLName' by display name."
+        if ($AllEmployeesDL) {
+            Write-Host "Found Exchange DL: $($AllEmployeesDL.Name)"
         } else {
-            Write-Host "Found Exchange Distribution List: $($AllEmployeesDL.Name)"
+            Write-Warning "Exchange DL '$ExchangeDLName' not found."
+        }
+    } catch {
+        Write-Warning "Error locating Exchange DL: $($_.Exception.Message)"
+    }
+} else {
+    Write-Warning "Skipping Exchange DL steps due to connection failure."
+}
+
+if ($GraphConnected) {
+    # --- Create the New User (including required -MailNickname) ---
+    if ($TestMode) {
+        Write-Host "[TEST MODE] Would run New-MgUser -DisplayName '$DisplayName' `
+                    -UserPrincipalName '$UPN' `
+                    -AccountEnabled `
+                    -PasswordProfile @{ Password = $Password; ForceChangePasswordNextSignIn = $false } `
+                    -MailNickname '$MailNickname'"
+        $NewUser   = New-Object PSObject -Property @{ Id = "test-user-id"; UserPrincipalName = $UPN; DisplayName = $DisplayName }
+        $NewUserId = $NewUser.Id
+    } else {
+        try {
+            $PasswordProfile = @{
+                Password                     = $Password
+                ForceChangePasswordNextSignIn = $false
+            }
+            # Corrected: Use -AccountEnabled as a switch (no "$true" after)
+            $NewUser = New-MgUser `
+                    -DisplayName       $DisplayName `
+                    -UserPrincipalName $UPN `
+                    -AccountEnabled `
+                    -PasswordProfile   $PasswordProfile `
+                    -MailNickname      $MailNickname
+            $NewUserId = $NewUser.Id
+            Write-Host "Created user '$($NewUser.DisplayName)' (ID: $NewUserId)."
+        } catch {
+            Write-Error "Error creating user: $($_.Exception.Message). Exiting."
+            exit 1
+        }
+    }
+
+
+    # --- Immediately Set UsageLocation="US" (Required Before Licensing) ---
+    if ($TestMode) {
+        Write-Host "[TEST MODE] Would update UsageLocation='US' for user ID $NewUserId."
+    } else {
+        try {
+            Update-MgUser -UserId $NewUserId -UsageLocation "US"
+            Write-Host "Set UsageLocation='US' for user ID $NewUserId."
+        } catch {
+            Write-Error "Failed to set UsageLocation: $($_.Exception.Message). Exiting."
+            exit 1
+        }
+    }
+
+    # --- ASSIGN LICENSE & ADD TO GROUPS BEFORE WAITING FOR MAILBOX ---
+    Write-Host "--- Assigning License & Adding to Groups ---"
+
+    # 1. Assign License Directly (Warehouse/Production) OR rely on group (OneDrive Folder Redirect) for computer users
+    if ($Department -in @('Warehouse','Production')) {
+        Write-Host "Assigning 'O365_BUSINESS_PREMIUM' to non-computer user..."
+        if ($TestMode) {
+            Write-Host "[TEST MODE] Would assign SKU 'O365_BUSINESS_PREMIUM' to user ID $NewUserId."
+        } else {
+            try {
+                $SkuObj = $AllSkus | Where-Object { $_.SkuPartNumber -eq "O365_BUSINESS_PREMIUM" }
+                if ($SkuObj) {
+                    $SkuId = $SkuObj.SkuId
+                    Set-MgUserLicense -UserId $NewUserId `
+                                      -AddLicenses @{ SkuId = $SkuId; DisabledPlans = @() } `
+                                      -RemoveLicenses @()
+                    Write-Host "Assigned 'O365_BUSINESS_PREMIUM' license."
+                } else {
+                    Write-Warning "SKU 'O365_BUSINESS_PREMIUM' not found; skipping license assignment."
+                }
+            } catch {
+                Write-Error "Error assigning license: $($_.Exception.Message)"
+            }
         }
     } else {
-        Write-Warning "Skipping Exchange DL check as connection failed."
+        Write-Host "Computer user: will rely on OneDrive Folder Redirect group for 'SPB' license..."
+        # No direct license call; group membership below will auto-provision SPB
     }
-} catch {
-    Write-Warning "Error occurred while trying to find Exchange Distribution List '$ExchangeDLName'."
-}
 
-# --- Create New User in Microsoft 365 ---
-Write-Host "--- Creating User in Microsoft 365 ---"
-if ($TestMode) {
-    Write-Host "[TEST MODE] Would create user '$DisplayName' with UPN '$UPN' and set a temporary password."
-    $NewUser = New-Object PSObject -Property @{ Id = "test-user-id"; UserPrincipalName = $UPN; DisplayName = $DisplayName } # Mock user object for testing
-    $NewUserId = $NewUser.Id
-} else {
-    try {
-        $PasswordProfile = @{
-            Password = $Password
-            ForceChangePasswordNextSignIn = $false
+    # 2. Add to Printer Group if Selected
+    if ($SelectedPrinterGroup) {
+        Write-Host "Adding user to Printer Group: $($SelectedPrinterGroup.DisplayName)..."
+        if ($TestMode) {
+            Write-Host "[TEST MODE] Would add user ID $NewUserId to group ID $($SelectedPrinterGroup.Id)."
+        } else {
+            try {
+                New-MgGroupMember -GroupId $SelectedPrinterGroup.Id -DirectoryObjectId $NewUserId
+                Write-Host "Added to printer group."
+            } catch {
+                Write-Error "Error adding to printer group: $($_.Exception.Message)"
+            }
         }
-        $NewUser = New-MgUser -DisplayName $DisplayName -UserPrincipalName $UPN -MailNickname $UPNPrefix -AccountEnabled:$true -PasswordProfile $PasswordProfile
-        Write-Host "User '$($NewUser.DisplayName)' created with User Principal Name: $($NewUser.UserPrincipalName), ID: $($NewUser.Id)."
-        $NewUserId = $NewUser.Id
-    } catch {
-        Write-Error "Error creating user: $($_.Exception.Message)"
-        exit 1
     }
-}
 
-if ($NewUserId) {
-    # --- Add User to Microsoft 365 Groups (including licensing group) ---
-    Write-Host "--- Adding User to Microsoft 365 Groups (Initial) ---"
+    # 3. Add to Base Microsoft 365 Groups (Including OneDrive Folder Redirect if applicable)
     foreach ($GroupName in $M365GroupsToAdd) {
         try {
             $Group = Get-MgGroup -Filter "displayName eq '$GroupName'"
             if ($Group) {
                 if ($TestMode) {
-                    Write-Host "[TEST MODE] Would add user to group: $($GroupName) (ID: $($Group.Id))"
+                    Write-Host "[TEST MODE] Would add user ID $NewUserId to group '$GroupName' (ID: $($Group.Id))."
                 } else {
                     New-MgGroupMember -GroupId $Group.Id -DirectoryObjectId $NewUserId
-                    Write-Host "Added user to group: $($GroupName)"
+                    Write-Host "Added to group: $GroupName."
                 }
             } else {
-                Write-Warning "Microsoft 365 Group '$GroupName' not found."
+                Write-Warning "Group '$GroupName' not found; skipping."
             }
         } catch {
-            Write-Error "Error adding user to group '$GroupName': $($_.Exception.Message)"
+            Write-Error "Error adding to group '$GroupName': $($_.Exception.Message)"
         }
     }
 
-    # --- Wait Indefinitely for Mailbox Provisioning ---
+    # --- WAIT FOR MAILBOX TO PROVISION AFTER LICENSE/GROUPS ASSIGNED ---
+    Write-Host "--- Waiting for Exchange mailbox to provision ---"
     $MailboxReady = $false
-    Write-Host "--- Waiting indefinitely for mailbox to be provisioned ---"
     while (-not $MailboxReady -and -not $TestMode) {
         Start-Sleep -Seconds 15
-        Write-Host "Checking if mailbox exists..."
         try {
             if (Get-Mailbox -Identity $UPN -ErrorAction SilentlyContinue) {
-                Write-Host "Mailbox provisioned successfully."
+                Write-Host "Mailbox provisioned."
                 $MailboxReady = $true
             }
         } catch {
-            Write-Warning "Error checking mailbox status: $($_.Exception.Message)"
+            Write-Warning "Error checking mailbox: $($_.Exception.Message)"
         }
     }
-    if ($TestMode) {
-        $MailboxReady = $true # Skip waiting in test mode
-    }
-    if (-not $MailboxReady -and -not $TestMode) {
-        Write-Warning "Mailbox provisioning did not complete within a reasonable time."
+    if ($TestMode) { 
+        $MailboxReady = $true 
+    } elseif (-not $MailboxReady) {
+        Write-Warning "Mailbox still not provisioned after waiting. Continuing without DL addition."
     }
 
-    # --- Add User to Selected Printer Group ---
-    if ($SelectedPrinterGroup) {
-        Write-Host "--- Adding User to Printer Group: $($SelectedPrinterGroup.DisplayName) ---"
+    # --- Add to Exchange Distribution List if mailbox ready ---
+    if ($AllEmployeesDL -and $MailboxReady) {
+        Write-Host "Adding user to Exchange DL: $($AllEmployeesDL.Name)..."
         if ($TestMode) {
-            Write-Host "[TEST MODE] Would add user to printer group '$($SelectedPrinterGroup.DisplayName)' (ID: $($SelectedPrinterGroup.Id))."
-        } else {
-            try {
-                New-MgGroupMember -GroupId $SelectedPrinterGroup.Id -DirectoryObjectId $NewUserId
-                Write-Host "Added user to group: $($SelectedPrinterGroup.DisplayName)"
-            } catch {
-                Write-Error "Error adding user to printer group '$($SelectedPrinterGroup.DisplayName)': $($_.Exception.Message)"
-            }
-        }
-    }
-
-    # --- Update User Attributes in Entra ID (Skip if Blank) ---
-    Write-Host "--- Updating User Attributes in Entra ID ---"
-    $userPropertiesToUpdate = @{}
-    if (-not [string]::IsNullOrWhiteSpace($Title)) {
-        $userPropertiesToUpdate.Add("JobTitle", $Title)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($Department)) {
-        $userPropertiesToUpdate.Add("Department", $Department)
-    }
-    if (-not [string]::IsNullOrWhiteSpace($MobilePhone)) {
-        $userPropertiesToUpdate.Add("MobilePhone", $MobilePhone)
-    }
-    if ($userPropertiesToUpdate.Count -gt 0 -and -not $TestMode) {
-        try {
-            Update-MgUser -UserId $NewUserId -BodyParameter $userPropertiesToUpdate
-            Write-Host "Updated user attributes."
-        } catch {
-            Write-Error "Error updating user attributes: $($_.Exception.Message)"
-        }
-    } elseif ($TestMode -and $userPropertiesToUpdate.Count -gt 0) {
-        Write-Host "[TEST MODE] Would update user attributes: $($userPropertiesToUpdate | Out-String)"
-    } else {
-        Write-Host "No user attributes to update or in Test Mode."
-    }
-
-    # --- Add a short delay before adding to Exchange DL ---
-    Write-Host "--- Waiting 10 seconds before adding to Exchange DL ---"
-    Start-Sleep -Seconds 10
-
-    # --- Add User to Exchange Distribution List ---
-    if ($AllEmployeesDL -and $MailboxReady -or $TestMode) {
-        Write-Host "--- Adding User to Exchange Distribution List: $($AllEmployeesDL.Name) ---"
-        if ($TestMode) {
-            Write-Host "[TEST MODE] Would add user with UPN '$UPN' to Exchange DL '$($AllEmployeesDL.PrimarySmtpAddress)'."
+            Write-Host "[TEST MODE] Would add UPN '$UPN' to DL '$($AllEmployeesDL.PrimarySmtpAddress)'."
         } else {
             try {
                 Add-DistributionGroupMember -Identity $AllEmployeesDL.PrimarySmtpAddress -Member $UPN -ErrorAction Stop
-                Write-Host "Added user to Exchange Distribution List '$($AllEmployeesDL.Name)'."
+                Write-Host "Added to Exchange DL."
             } catch {
-                Write-Error "Error adding user to Exchange Distribution List '$($AllEmployeesDL.Name)': $($_.Exception.Message)"
+                Write-Error "Error adding to Exchange DL: $($_.Exception.Message)"
             }
         }
-    } elseif (-not $AllEmployeesDL) {
-        Write-Warning "Skipping adding user to Exchange DL as the DL was not found."
-    } elseif (-not $MailboxReady -and -not $TestMode) {
-        Write-Warning "Skipping adding user to Exchange DL as the mailbox was not confirmed."
     }
+
+    # --- Update Additional Entra ID Attributes (Skip blanks) ---
+    Write-Host "--- Updating user attributes in Entra ID ---"
+    $userProps = @{}
+    if (-not [string]::IsNullOrWhiteSpace($Title))      { $userProps.Add("JobTitle",$Title) }
+    if (-not [string]::IsNullOrWhiteSpace($Department)) { $userProps.Add("Department",$Department) }
+    if (-not [string]::IsNullOrWhiteSpace($MobilePhone)){ $userProps.Add("MobilePhone",$MobilePhone) }
+
+    if ($userProps.Count -gt 0) {
+        if ($TestMode) {
+            Write-Host "[TEST MODE] Would update user ID $NewUserId with: $($userProps | Out-String)."
+        } else {
+            try {
+                Update-MgUser -UserId $NewUserId -BodyParameter $userProps
+                Write-Host "Updated additional attributes."
+            } catch {
+                Write-Error "Error updating attributes: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # --- Stop Timer + Disconnect ---
+    $ScriptEndTime = Get-Date
+    $Elapsed       = $ScriptEndTime - $ScriptStartTime
+
+    Write-Host "--- Disconnecting from services ---"
+    try {
+        Disconnect-MgGraph
+        Write-Host "Disconnected from Microsoft Graph."
+    } catch {
+        Write-Warning "Error disconnecting Graph: $($_.Exception.Message)"
+    }
+    try {
+        if ($ExchangeOnlineConnected) {
+            Disconnect-ExchangeOnline -Confirm:$false
+            Write-Host "Disconnected from Exchange Online."
+        }
+    } catch {
+        Write-Warning "Error disconnecting Exchange: $($_.Exception.Message)"
+    }
+
+    Write-Host "Script completed in $([math]::Round($Elapsed.TotalSeconds,2)) seconds."
 } else {
-    Write-Warning "Unable to proceed with user creation due to connection issues."
+    Write-Warning "Graph connection unavailable; cannot proceed."
 }
 
-# --- Stop Timer ---
-$ScriptEndTime = Get-Date
-$TimeTaken = $ScriptEndTime - $ScriptStartTime
-
-# --- Disconnect from Modules ---
-Write-Host "--- Disconnecting from PowerShell Modules ---"
-try {
-    Disconnect-MgGraph
-    Write-Host "Disconnected from Microsoft Graph."
-} catch {
-    Write-Warning "Error during Microsoft Graph disconnection: $($_.Exception.Message)"
-}
-
-try {
-    Disconnect-ExchangeOnline
-    Write-Host "Disconnected from Exchange Online."
-} catch {
-    Write-Warning "Error during Exchange Online disconnection: $($_.Exception.Message)"
-}
-
-Write-Host "--- Script complete. (Time taken: $($TimeTaken.ToString('c'))) ---"
+Write-Host "--- Script complete. ---"
 if ($NewUserId) {
     Write-Host "--- Quick Access Links ---"
     Write-Host
@@ -334,4 +404,14 @@ if ($NewUserId) {
     Write-Host
     Write-Host "RingCentral:"
     Write-Host "  https://service.ringcentral.com/" 
+    Write-Host
+    Write-Host "PowerBI Spreadsheet:"
+    Write-Host "  https://tinyurl.com/ssisharepoint"
+    Write-Host
+    Write-Host "Atomic Helpdesk:"
+    Write-Host "  https://portal.atomicdata.com/Account/Logon"
+    Write-Host
+    Write-Host "Sharepoint Settings:"
+    Write-Host "  https://tinyurl.com/kcr8b8tw"
+    Write-Host
 }
