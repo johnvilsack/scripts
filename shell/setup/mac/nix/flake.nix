@@ -33,6 +33,7 @@
           pkgs.roboto
           pkgs.git
           pkgs.eza
+          pkgs.claude-code
         ];
 
         fonts.packages = [
@@ -48,6 +49,8 @@
             "ollama"
             "node"
             "scc"
+            "fswatch"
+            "killport"
           ];
           casks = [
             "github"
@@ -66,6 +69,7 @@
             "bruno"
             "chatgpt"
             "windsurf"
+            "claude"
           ];
           masApps = {
             "1Password Extension" = 1569813296;
