@@ -29,12 +29,12 @@ alias localip="ifconfig | sed -En 's/127.0.0.1//;s/.*inet (addr:)?(([0-9]*\.){3}
 alias flushdns="sudo discoveryutil mdnsflushcache;sudo discoveryutil udnsflushcaches;say flushed"
 
 alias loc="scc"
-alias win11="pwsh /Users/johnv/Library/CloudStorage/OneDrive-ShippersSupply,Inc/Documents/GitHub/scripts/powershell/entra/Get-Win11UpgradeUpdate.ps1"
-alias intune11="pwsh /Users/johnv/Library/CloudStorage/OneDrive-ShippersSupply,Inc/Documents/GitHub/scripts/powershell/entra/Get-Win11Intune.ps1"
-alias ssnewuser="pwsh /Users/johnv/Library/CloudStorage/OneDrive-ShippersSupply,Inc/Documents/GitHub/scripts/powershell/entra/Add-NewUser.ps1"
+alias win11="pwsh ~/github/scripts/powershell/entra/Get-Win11UpgradeUpdate.ps1"
+alias intune11="pwsh ~/github/scripts/powershell/entra/Get-Win11Intune.ps1"
+alias ssnewuser="pwsh ~/github/scripts/powershell/entra/Add-NewUser.ps1"
 alias tkill="kill-port 5173"
-alias twatch="source ~/Documents/GitHub/vtasks/.scripts/watch.sh"
-alias copystuff="source ~/Library/CloudStorage/OneDrive-ShippersSupply,Inc/Documents/GitHub/scripts/shell/setup/mac/copystuff.sh"
+alias twatch="source ~/github/vtasks/.scripts/watch.sh"
+alias copystuff="source ~/github/scripts/shell/setup/mac/copystuff.sh"
 alias epwsh="code ~/.config/powershell/Microsoft.PowerShell_profile.ps1"
 alias codebash="code ~/.zshrc"
 
