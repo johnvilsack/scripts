@@ -35,3 +35,17 @@ alias ssnewuser="pwsh /Users/johnv/Library/CloudStorage/OneDrive-ShippersSupply,
 alias tkill="kill-port 5173"
 alias twatch="source ~/Documents/GitHub/vtasks/.scripts/watch.sh"
 alias copystuff="source ~/Library/CloudStorage/OneDrive-ShippersSupply,Inc/Documents/GitHub/scripts/shell/setup/mac/copystuff.sh"
+alias epwsh="code ~/.config/powershell/Microsoft.PowerShell_profile.ps1"
+alias codebash="code ~/.zshrc"
+
+# Wire up pwsh to connect to all modules
+pwsh() {
+  if [[ "$1" == "-connect" ]]; then
+    shift
+    # Run Connect-All.ps1 as a file.  This will load your profile first, then run the script.
+    command pwsh -NoExit -File "$HOME/.config/powershell/Connect-All.ps1"
+  else
+    command pwsh "$@"
+  fi
+}
+
