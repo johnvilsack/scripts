@@ -1,0 +1,12 @@
+Title,URL
+Microsoft 365 Admin Center - User Details, https://admin.microsoft.com/Adminportal/Home#/users/:/UserDetails/$NewUserId
+Entra Admin Center - User Overview, https://entra.microsoft.com/#view/Microsoft_AAD_UsersAndTenants/UserProfileMenuBlade/~/overview/userId/$NewUserId/hidePreviewBanner~/true
+Microsoft Exchange Admin Center - Mailbox Details, https://admin.exchange.microsoft.com/#/mailboxes/:/MailboxDetails/$NewUserId
+Azure AD Portal - User Overview, https://aad.portal.azure.com/#view/Microsoft_AAD_UsersAndTenants/UserProfileMenuBlade/~/overview/userId/$NewUserId/hidePreviewBanner~/true
+Cisco DUO, https://admin-493d74ec.duosecurity.com/
+Acumatica, https://shippers-supply.acumatica.com/
+RingCentral, https://service.ringcentral.com/
+PowerBI Spreadsheet, https://tinyurl.com/ssisharepoint
+Atomic Helpdesk, https://portal.atomicdata.com/Account/Logon
+Sharepoint Settings, https://tinyurl.com/kcr8b8tw
+PowerBI RLS, https://tinyurl.com/4sj6eaxe

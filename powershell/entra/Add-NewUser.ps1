@@ -381,41 +381,5 @@ if ($GraphConnected) {
 
 Write-Host "--- Script complete. ---"
 if ($NewUserId) {
-    Write-Host "--- Quick Access Links ---"
-    Write-Host
-    Write-Host "Microsoft 365 Admin Center:"
-    Write-Host "  User Details: https://admin.microsoft.com/Adminportal/Home#/users/:/UserDetails/$NewUserId"
-    Write-Host
-    Write-Host "Entra Admin Center:"
-    Write-Host "  User Overview: https://entra.microsoft.com/#view/Microsoft_AAD_UsersAndTenants/UserProfileMenuBlade/~/overview/userId/$NewUserId/hidePreviewBanner~/true"
-    Write-Host
-    Write-Host "Microsoft Exchange Admin Center:"
-    Write-Host "  Mailbox Details: https://admin.exchange.microsoft.com/#/mailboxes/:/MailboxDetails/$NewUserId"
-    Write-Host
-    Write-Host "Azure AD Portal:"
-    Write-Host "  User Overview: https://aad.portal.azure.com/#view/Microsoft_AAD_UsersAndTenants/UserProfileMenuBlade/~/overview/userId/$NewUserId/hidePreviewBanner~/true"
-    Write-Host "--------------------------"
-    Write-Host
-    Write-Host "Cisco DUO:"
-    Write-Host "  https://admin-493d74ec.duosecurity.com/"
-    Write-Host
-    Write-Host "Acumatica:"
-    Write-Host "  https://shippers-supply.acumatica.com/" 
-    Write-Host
-    Write-Host "RingCentral:"
-    Write-Host "  https://service.ringcentral.com/" 
-    Write-Host
-    Write-Host "PowerBI Spreadsheet:"
-    Write-Host "  https://tinyurl.com/ssisharepoint"
-    Write-Host
-    Write-Host "Atomic Helpdesk:"
-    Write-Host "  https://portal.atomicdata.com/Account/Logon"
-    Write-Host
-    Write-Host "Sharepoint Settings:"
-    Write-Host "  https://tinyurl.com/kcr8b8tw"
-    Write-Host
-    Write-Host "PowerBI RLS"
-    Write-Host "  https://tinyurl.com/4sj6eaxe"
-    Write-Host
-
+    .\Show-NewUserLinks.ps1 -NewUserId $NewUserId
 }
