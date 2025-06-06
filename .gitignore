@@ -3,3 +3,4 @@ shell/google/sorted_files.txt
 shell/google/credentials.json
 shell/google/files.json
 shell/google/token.json
+powershell/secrets/pnp-powershell.clientid
