@@ -37,6 +37,8 @@ alias twatch="source ~/github/vtasks/.scripts/watch.sh"
 alias copystuff="source ~/github/scripts/shell/setup/mac/copystuff.sh"
 alias epwsh="code ~/.config/powershell/Microsoft.PowerShell_profile.ps1"
 alias codebash="code ~/.zshrc"
+alias ghhome="cd ~/github"
+alias usage="npx ccusage@latest"
 
 # Wire up pwsh to connect to all modules
 pwsh() {
