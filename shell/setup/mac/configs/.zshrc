@@ -39,6 +39,7 @@ alias epwsh="code ~/.config/powershell/Microsoft.PowerShell_profile.ps1"
 alias codebash="code ~/.zshrc"
 alias ghhome="cd ~/github"
 alias usage="npx ccusage@latest"
+alias scripts="cd ~/github/scripts"
 
 # Wire up pwsh to connect to all modules
 pwsh() {
