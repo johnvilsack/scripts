@@ -256,7 +256,7 @@ if ($AllResults.Count -gt 0) {
     
     # Export options
     Write-Host "`n8. Export Options:" -ForegroundColor Green
-    $ExportPath = "SharePointDeletions_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+    $ExportPath = "SharePointDeletions.csv"
     $ProcessedResults | Export-Csv -Path $ExportPath -NoTypeInformation
     Write-Host "   ✓ Full results exported to: $ExportPath" -ForegroundColor Green
     

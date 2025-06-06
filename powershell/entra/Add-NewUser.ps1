@@ -385,6 +385,6 @@ $Add-NewUser-CompanyDirectory = Join-Path $PSScriptRoot 'Add-NewUser-CompanyDire
 
 Write-Host "--- Script complete. ---"
 if ($NewUserId) {
-    $Show-NewUserLinks = Join-Path $PSScriptRoot 'Show-NewUserLinks.ps1'
-    & $Show-NewUserLinks -NewUserId $NewUserId
+    $Add-NewUser-LinkWindow = Join-Path $PSScriptRoot 'Add-NewUser-LinkWindow.ps1'
+    & $Add-NewUser-LinkWindow -NewUserId $NewUserId
 }
