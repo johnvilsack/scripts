@@ -1,33 +1,31 @@
 <#
 .SYNOPSIS
-    Adds (or tests adding) a user to the People web part on Company-Directory.aspx and re-sorts.
+    Adds (or tests adding) a user to the People web part on Company-Directory.aspx using Microsoft Graph.
 
 .DESCRIPTION
-    - Checks for and imports the PnP.PowerShell module if not already loaded.
-    - Connects to SharePoint Online using Connect-PnPOnline (relying on a stored Client ID in Keychain).
-    - Retrieves the user’s AAD Object ID and job title (role) via Get-PnPAzureADUser.
-    - Loads the “Company-Directory.aspx” modern page and locates the People web part by its SPFx WebPartId.
-    - Adds the specified user into the “persons” array (using their UPN, AAD Object ID, and job title) if not already present.
-    - Sorts the “persons” array by UPN.
-    - If run with –Test, outputs the updated JSON without writing; otherwise, writes changes with Set-PnPClientSideWebPart.
+    - Self-contained script that installs and imports only required Graph modules
+    - Uses Microsoft Graph PowerShell to get real AAD Object ID and job title
+    - Connects to SharePoint Online using PnP.PowerShell
+    - Adds the specified user into the "persons" array with real AAD Object ID
+    - Sorts the "persons" array alphabetically by email address (id field)
+    - If run with –Test, outputs the exact JSON that would be injected without writing
 
 .PARAMETER UserPrincipalName
-    The UPN (email) of the user to add. Defaults to “testuser@shippers-supply.com”.
+    The UPN (email) of the user to add. Defaults to value in script configuration.
 
 .PARAMETER Test
-    If specified, do not write back changes; only show what would change.
+    If specified, do not write back changes; only show the exact JSON that would be injected.
 
 .EXAMPLE
-    .\Update-CompanyDirectory.ps1 -UserPrincipalName "jdoe@shippers-supply.com"
-    # Connects, adds/updates “jdoe@shippers-supply.com” with their job title from AAD, sorts, and writes back.
+    .\Update-CompanyDirectory-Clean.ps1 -UserPrincipalName "jdoe@shippers-supply.com"
 
 .EXAMPLE
-    .\Update-CompanyDirectory.ps1 -Test
-    # Uses “testuser@shippers-supply.com”, outputs the updated JSON, but does not write any changes.
+    .\Update-CompanyDirectory-Clean.ps1 -Test
 
 .NOTES
-    - Requires PnP.PowerShell ≥ v1.11.0 for Get-PnPAzureADUser and client-side page cmdlets.
-    - Uses a pre-registered AAD App’s Client ID stored in Keychain via Set-PnPManagedAppId.
+    - Automatically installs Microsoft.Graph.Authentication and Microsoft.Graph.Users if needed
+    - Handles Graph authentication automatically
+    - Uses real AAD Object IDs from Microsoft Graph
 #>
 
 [CmdletBinding()]
@@ -39,96 +37,195 @@ param(
     [switch]$Test
 )
 
+#region Configuration - Modify these values for your environment
+$SHAREPOINT_SITE_URL = "https://shipperssupply.sharepoint.com"
+$SHAREPOINT_PAGE_NAME = "Company-Directory.aspx"
+$PEOPLE_WEBPART_ID = "7f718435-ee4d-431c-bdbf-9c4ff326f46e"
+$DEFAULT_USER_UPN = "testuser@shippers-supply.com"
+
+# Use default UPN if none provided
+if ([string]::IsNullOrWhiteSpace($UserPrincipalName)) {
+    $UserPrincipalName = $DEFAULT_USER_UPN
+}
+#endregion
+
 function Ensure-Module {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$Name
+        [string]$Name,
+        [Parameter(Mandatory = $false)]
+        [string]$MinimumVersion
     )
-    if (-not (Get-Module -ListAvailable -Name $Name)) {
-        Write-Host "Installing module '$Name'..."
-        Install-Module -Name $Name -Scope CurrentUser -Force -ErrorAction Stop
+    
+    $installedModule = Get-Module -ListAvailable -Name $Name | Sort-Object Version -Descending | Select-Object -First 1
+    
+    if (-not $installedModule) {
+        Install-Module -Name $Name -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop | Out-Null
+    } elseif ($MinimumVersion -and $installedModule.Version -lt [Version]$MinimumVersion) {
+        Update-Module -Name $Name -Force -ErrorAction Stop | Out-Null
     }
-    Import-Module $Name -ErrorAction Stop
+    
+    Import-Module $Name -Force -ErrorAction Stop | Out-Null
+}
+
+function Test-GraphConnection {
+    try {
+        $context = Get-MgContext
+        if ($context -and $context.Scopes -contains 'User.Read.All') {
+            return $true
+        }
+        return $false
+    }
+    catch {
+        return $false
+    }
+}
+
+function Connect-ToGraph {
+    try {
+        Connect-MgGraph -Scopes 'User.Read.All' -NoWelcome -ErrorAction Stop | Out-Null
+        return $true
+    }
+    catch {
+        Write-Error "Failed to connect to Microsoft Graph: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 try {
-    # 1. Ensure PnP.PowerShell is installed and imported
+    # 1. Ensure required modules are installed and imported
     Ensure-Module -Name "PnP.PowerShell"
+    Ensure-Module -Name "Microsoft.Graph.Authentication"
+    Ensure-Module -Name "Microsoft.Graph.Users"
 
-    # 2. Connect to SharePoint Online (relies on stored Client ID in Keychain)
-    Write-Host "Connecting to SharePoint Online..."
-    Connect-PnPOnline "https://shipperssupply.sharepoint.com" -ErrorAction Stop
-
-    # 3. Retrieve AAD Object ID and Job Title (role) via Get-PnPAzureADUser
-    Write-Host "Retrieving Azure AD Object ID and Job Title for $UserPrincipalName..."
-    $aadUser = Get-PnPAzureADUser -Identity $UserPrincipalName -ErrorAction Stop
-    $aadObjectId = $aadUser.Id
-    $jobTitle     = if ($aadUser.JobTitle) { $aadUser.JobTitle } else { "No Title" }
-    Write-Host "Found AAD Object ID: $aadObjectId; Job Title: '$jobTitle'"
-
-    # 4. Load the modern client-side page
-    $pageName = "Company-Directory.aspx"
-    Write-Host "Loading page '$pageName'..."
-    $page = Get-PnPClientSidePage -Identity $pageName -ErrorAction Stop
-
-    # 5. Locate the People web part by its SPFx WebPartId
-    $peopleWebPartId = "7f718435-ee4d-431c-bdbf-9c4ff326f46e"
-    $ctrl = $page.Controls | Where-Object { $_.WebPartId -eq $peopleWebPartId }
-    if (-not $ctrl) {
-        throw "Could not locate the People web part (ID $peopleWebPartId) on $pageName."
+    # 2. Check/establish Microsoft Graph connection
+    if (-not (Test-GraphConnection)) {
+        if (-not (Connect-ToGraph)) {
+            throw "Failed to establish Microsoft Graph connection"
+        }
     }
 
-    # 6. Convert the control's JSON Properties into a PS object
-    $rawJson = $ctrl.Properties.GetRawText()
-    $props   = $rawJson | ConvertFrom-Json
+    # 3. Get user information from Microsoft Graph
+    try {
+        $mgUser = Get-MgUser -UserId $UserPrincipalName -ErrorAction Stop
+        $aadObjectId = $mgUser.Id
+        $jobTitle = $mgUser.JobTitle  # Use exactly what's in AD - could be null/empty
+        $displayName = if ($mgUser.DisplayName) { $mgUser.DisplayName } else { $UserPrincipalName.Split('@')[0] }
+        
+        # Validate required fields
+        if ([string]::IsNullOrWhiteSpace($aadObjectId)) {
+            throw "AAD Object ID is required but was empty"
+        }
+    }
+    catch {
+        Write-Error "Failed to retrieve user from Microsoft Graph: $($_.Exception.Message)"
+        throw
+    }
 
-    # 7. Build a new person object
+    # 4. Connect to SharePoint Online
+    try {
+        Connect-PnPOnline $SHAREPOINT_SITE_URL -ErrorAction Stop | Out-Null
+    }
+    catch {
+        Write-Error "Failed to connect to SharePoint Online: $($_.Exception.Message)"
+        throw
+    }
+
+    # 5. Load the SharePoint page and web part
+    $page = Get-PnPClientSidePage -Identity $SHAREPOINT_PAGE_NAME -ErrorAction Stop
+    $ctrl = $page.Controls | Where-Object { $_.WebPartId -eq $PEOPLE_WEBPART_ID }
+    if (-not $ctrl) {
+        throw "Could not locate the People web part (ID $PEOPLE_WEBPART_ID) on $SHAREPOINT_PAGE_NAME."
+    }
+
+    # 6. Process the web part JSON
+    $rawJson = $ctrl.Properties.GetRawText()
+    $props = $rawJson | ConvertFrom-Json
+
+    # Build new person object (matching existing JSON structure: id, role, aadObjectId)
     $newPerson = [PSCustomObject]@{
         id          = $UserPrincipalName
-        role        = $jobTitle
+        role        = if ([string]::IsNullOrWhiteSpace($jobTitle)) { "" } else { $jobTitle }
         aadObjectId = $aadObjectId
     }
 
-    # 8. Ensure the "persons" array exists
+    # Ensure the "persons" array exists
     if (-not $props.persons) {
-        Write-Host "'persons' array not found in web part JSON. Initializing new array..."
         $props.persons = @()
     }
 
-    # 9. Check if the user already exists in the array
+    # Check if the user already exists
     $existing = $props.persons | Where-Object { $_.id -eq $UserPrincipalName }
     if ($existing) {
-        Write-Host "User '$UserPrincipalName' already exists in the directory. Updating job title if changed..."
-        if ($existing.role        -ne $jobTitle)     { $existing.role        = $jobTitle }
-        if ($existing.aadObjectId -ne $aadObjectId) { $existing.aadObjectId = $aadObjectId }
+        $existing.role = if ([string]::IsNullOrWhiteSpace($jobTitle)) { "" } else { $jobTitle }
+        $existing.aadObjectId = $aadObjectId
+        $action = "Updated"
     }
     else {
-        Write-Host "Adding new user '$UserPrincipalName' with job title '$jobTitle'..."
         $props.persons += $newPerson
+        $action = "Added"
     }
 
-    # 10. Sort the persons array by UPN (id)
+    # Validate no duplicate AAD Object IDs (can cause image confusion in SharePoint)
+    $duplicateAADIds = $props.persons | Group-Object aadObjectId | Where-Object { $_.Count -gt 1 -and $_.Name -ne "" }
+    if ($duplicateAADIds) {
+        Write-Warning "Found duplicate AAD Object IDs in directory:"
+        $duplicateAADIds | ForEach-Object {
+            Write-Warning "  AAD ID $($_.Name) used by: $($_.Group.id -join ', ')"
+        }
+    }
+
+    # Sort alphabetically by email address
     $props.persons = $props.persons | Sort-Object id
 
-    # 11. Convert back to JSON with sufficient depth
+    # Convert to JSON
     $updatedJson = $props | ConvertTo-Json -Depth 10
 
     if ($Test) {
-        # 12a. Test mode: Output the updated JSON; do NOT write changes
-        Write-Host "=== TEST MODE: No changes will be written back ==="
-        Write-Host "Updated 'persons' JSON for People web part:"
+        Write-Host "TEST MODE: $action user '$UserPrincipalName' ($displayName)" -ForegroundColor Yellow
+        Write-Host "Job Title: $(if([string]::IsNullOrWhiteSpace($jobTitle)) { '[EMPTY]' } else { $jobTitle })" -ForegroundColor Gray
+        Write-Host "AAD Object ID: $aadObjectId" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "Updated JSON:" -ForegroundColor Cyan
         Write-Host $updatedJson
     }
     else {
-        # 12b. Write mode: Push updated JSON back into the same web part
-        Write-Host "Writing updated properties back to the People web part..."
-        Set-PnPClientSideWebPart `
-            -Page              $pageName `
-            -InstanceId        $ctrl.Id `
-            -WebPartProperties $updatedJson `
-            -ErrorAction Stop
-
-        Write-Host "Successfully updated '$UserPrincipalName' in Company-Directory.aspx."
+        try {
+            # Direct property modification (Microsoft documented approach)
+            $ctrl.PropertiesJson = $updatedJson
+            $page.Save()
+            
+            # Force republish to clear SharePoint's People web part cache
+            Start-Sleep -Seconds 2  # Give SharePoint time to process
+            $page.Publish("Updated company directory")
+            
+            # Additional cache clearing - republish again after brief delay
+            Start-Sleep -Seconds 1
+            $page.Publish("Refreshed company directory")
+            
+            Write-Host "$action user '$UserPrincipalName' in company directory" -ForegroundColor Green
+        }
+        catch {
+            # Fallback method
+            $newCmdlet = Get-Command "Set-PnPPageWebPart" -ErrorAction SilentlyContinue
+            if ($newCmdlet -and $ctrl.InstanceId) {
+                try {
+                    Set-PnPPageWebPart -Page $SHAREPOINT_PAGE_NAME -Identity $ctrl.InstanceId -PropertiesJson $updatedJson -ErrorAction Stop
+                    
+                    # Force republish to clear SharePoint's People web part cache
+                    Start-Sleep -Seconds 2
+                    $page.Publish("Refreshed company directory")
+                    
+                    Write-Host "$action user '$UserPrincipalName' in company directory" -ForegroundColor Green
+                }
+                catch {
+                    throw "Failed to update web part: $($_.Exception.Message)"
+                }
+            }
+            else {
+                throw "Failed to update web part: $($_.Exception.Message)"
+            }
+        }
     }
 }
 catch {

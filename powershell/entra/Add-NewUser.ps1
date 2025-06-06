@@ -378,8 +378,13 @@ if ($GraphConnected) {
 } else {
     Write-Warning "Graph connection unavailable; cannot proceed."
 }
+# Add to Company Directory
+$Add-NewUser-CompanyDirectory = Join-Path $PSScriptRoot 'Add-NewUser-CompanyDirectory.ps1'
+& $Add-NewUser-CompanyDirectory -UserPrincipalName $
+
 
 Write-Host "--- Script complete. ---"
 if ($NewUserId) {
-    .\Show-NewUserLinks.ps1 -NewUserId $NewUserId
+    $Show-NewUserLinks = Join-Path $PSScriptRoot 'Show-NewUserLinks.ps1'
+    & $Show-NewUserLinks -NewUserId $NewUserId
 }
