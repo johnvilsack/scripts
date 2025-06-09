@@ -5,3 +5,4 @@ shell/google/files.json
 shell/google/token.json
 powershell/secrets/pnp-powershell.clientid
 powershell/entra/AzureAD_Users_Managers.csv
+powershell/sharepoint/SharePointDeletions.csv
