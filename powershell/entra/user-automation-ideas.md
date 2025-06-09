@@ -37,9 +37,14 @@ Duo
 *** ONBOARDING SCRIPT
   Set to Active
   Send Activation SMS
-
+Guest users can be managed through depart in their contact info
 
 
 # Offboarding script needed
+  Convert to Shared Mailbox - Grant Manager Access
+  Set up OneDrive for Manager access
+  Set timer and notifcation emails
 # Move ShowLinkWindow to actual HTML page populated by a get request
+# Email notifications in azure automation
+  You must store valid SMTP credentials as an Automation Credential asset and allow port 587.
 
