@@ -9,13 +9,15 @@
     3. Check that the appropriate license SKU (O365_BUSINESS_PREMIUM or SPB) has available seats; abort if none remain.
     4. Create the user via New-MgUser (including required -MailNickname).
     5. Immediately set UsageLocation="US".
-    6. Assign license (direct or via group) and add user to all required groups.
-    7. Wait for the Exchange mailbox to appear before adding to the “All Employees” DL.
-    8. Update any remaining Entra ID attributes (JobTitle, Department, MobilePhone).
+    6. Set manager if specified.
+    7. Assign license (direct or via group) and add user to all required groups.
+    8. Wait for the Exchange mailbox to appear before adding to the "All Employees" DL.
+    9. Update any remaining Entra ID attributes (JobTitle, Department, MobilePhone).
 .NOTES
     • Requires Microsoft.Graph PowerShell SDK and ExchangeOnlineManagement modules.
     • DisplayName is generated automatically per Graph recommendations.
     • If any required SKU has zero available licenses, the script aborts before creating the user.
+    • Company field is set to "Shippers-Supply".
 #>
 
 param (
@@ -30,33 +32,72 @@ Write-Host "--- Checking for Required Modules and Connections ---"
 $GraphConnected          = $false
 $ExchangeOnlineConnected = $false
 
-try {
-    if (-not (Get-Module -ListAvailable -Name Microsoft.Graph)) {
-        Write-Host "Installing Microsoft.Graph module..."
-        Install-Module -Name Microsoft.Graph -Scope CurrentUser -Force
-    }
-    Write-Host "Connecting to Microsoft Graph..."
-    Import-Module Microsoft.Graph
-    Connect-MgGraph -Verbose -Scopes "User.ReadWrite.All","Group.Read.All","GroupMember.ReadWrite.All","Organization.Read.All" -ErrorAction Stop
-    Write-Host "Connected to Microsoft Graph." 
+# Required Graph modules (only load what we need)
+$RequiredGraphModules = @(
+    "Microsoft.Graph.Authentication",
+    "Microsoft.Graph.Users", 
+    "Microsoft.Graph.Groups",
+    "Microsoft.Graph.Identity.DirectoryManagement"
+)
+
+# Check if already connected to Microsoft Graph
+$GraphContext = Get-MgContext -ErrorAction SilentlyContinue
+if ($GraphContext) {
+    Write-Host "Already connected to Microsoft Graph as: $($GraphContext.Account)"
     $GraphConnected = $true
-} catch {
-    Write-Error "Unable to connect to Microsoft Graph: $($_.Exception.Message). Exiting."
-    exit 1
+} else {
+    try {
+        # Install and import only required Graph modules
+        foreach ($Module in $RequiredGraphModules) {
+            if (-not (Get-Module -ListAvailable -Name $Module)) {
+                Write-Host "Installing $Module..."
+                Install-Module -Name $Module -Scope CurrentUser -Force
+            }
+            Import-Module $Module
+        }
+        
+        Write-Host "Connecting to Microsoft Graph..."
+        Connect-MgGraph -Scopes "User.ReadWrite.All","Group.Read.All","GroupMember.ReadWrite.All","Organization.Read.All" -ErrorAction Stop
+        Write-Host "Connected to Microsoft Graph." 
+        $GraphConnected = $true
+    } catch {
+        Write-Error "Unable to connect to Microsoft Graph: $($_.Exception.Message). Exiting."
+        exit 1
+    }
 }
 
+# Check if already connected to Exchange Online
+$ExchangeConnection = $null
 try {
-    if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
-        Write-Host "Installing ExchangeOnlineManagement module..."
-        Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force
-    }
-    Write-Host "Connecting to Exchange Online..."
-    Import-Module ExchangeOnlineManagement
-    Connect-ExchangeOnline -ErrorAction Stop
-    Write-Host "Connected to Exchange Online."
-    $ExchangeOnlineConnected = $true
+    $ExchangeConnection = Get-ConnectionInformation -ErrorAction SilentlyContinue
 } catch {
-    Write-Warning "Unable to connect to Exchange Online: $($_.Exception.Message). Skipping DL steps."
+    # Get-ConnectionInformation might not exist in older versions, try alternative
+    try {
+        $null = Get-OrganizationConfig -ErrorAction Stop
+        $ExchangeOnlineConnected = $true
+        Write-Host "Already connected to Exchange Online."
+    } catch {
+        $ExchangeConnection = $null
+    }
+}
+
+if ($ExchangeConnection -and -not $ExchangeOnlineConnected) {
+    Write-Host "Already connected to Exchange Online as: $($ExchangeConnection.UserPrincipalName)"
+    $ExchangeOnlineConnected = $true
+} elseif (-not $ExchangeOnlineConnected) {
+    try {
+        if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
+            Write-Host "Installing ExchangeOnlineManagement module..."
+            Install-Module -Name ExchangeOnlineManagement -Scope CurrentUser -Force
+        }
+        Write-Host "Connecting to Exchange Online..."
+        Import-Module ExchangeOnlineManagement
+        Connect-ExchangeOnline -ErrorAction Stop
+        Write-Host "Connected to Exchange Online."
+        $ExchangeOnlineConnected = $true
+    } catch {
+        Write-Warning "Unable to connect to Exchange Online: $($_.Exception.Message). Skipping DL steps."
+    }
 }
 
 # --- Prompt for Core User Details ---
@@ -100,6 +141,64 @@ Write-Host "Using UPN: '$UPN' and mailNickname: '$MailNickname'"
 $Password    = Read-Host "Enter Temporary Password" -AsSecureString
 $Title       = Read-Host "Enter Job Title"
 $Department  = Read-Host "Enter Department"
+
+# --- Prompt for Manager's Email (UPN) with Validation ---
+$ManagerId = $null
+$ManagerUPN = $null
+do {
+    $ManagerEmail = Read-Host "Enter Manager's Email (UPN) [optional - press Enter to skip]"
+    if ([string]::IsNullOrWhiteSpace($ManagerEmail)) {
+        Write-Host "No manager specified. Continuing without manager assignment."
+        break
+    } else {
+        if ($TestMode) {
+            Write-Host "[TEST MODE] Simulating manager validation for '$ManagerEmail'."
+            $ManagerId = "test-manager-id"
+            $ManagerUPN = $ManagerEmail
+            Write-Host "[TEST MODE] Manager validation successful."
+            break
+        } else {
+            try {
+                $ManagerUser = Get-MgUser -Filter "userPrincipalName eq '$ManagerEmail'" -ErrorAction Stop
+                if ($ManagerUser) {
+                    $ManagerId = $ManagerUser.Id
+                    $ManagerUPN = $ManagerUser.UserPrincipalName
+                    Write-Host "Manager found: $($ManagerUser.DisplayName) ($ManagerUPN)"
+                    break
+                } else {
+                    Write-Warning "Manager with UPN '$ManagerEmail' not found. Please try again."
+                }
+            } catch {
+                Write-Warning "Error validating manager '$ManagerEmail': $($_.Exception.Message). Please try again."
+            }
+        }
+    }
+} while ($true)
+
+# --- Prompt for Employee Type ---
+$EmployeeTypeOptions = @{
+    1 = "Employee"
+    2 = "Temp" 
+    3 = "Contractor"
+    4 = "Vendor"
+}
+
+Write-Host "--- Select Employee Type ---"
+foreach ($key in $EmployeeTypeOptions.Keys | Sort-Object) {
+    Write-Host "$key. $($EmployeeTypeOptions[$key])"
+}
+
+do {
+    $EmployeeTypeSelection = Read-Host "Enter Employee Type number (1-4)"
+    if ($EmployeeTypeSelection -as [int] -and $EmployeeTypeOptions.ContainsKey([int]$EmployeeTypeSelection)) {
+        $EmployeeType = $EmployeeTypeOptions[[int]$EmployeeTypeSelection]
+        Write-Host "Employee Type set to: $EmployeeType"
+        break
+    } else {
+        Write-Warning "Invalid selection. Please enter a number between 1 and 4."
+    }
+} while ($true)
+
 $MobilePhone = Read-Host "Enter Mobile Phone Number (optional)"
 
 # --- Determine Required License SKU ---
@@ -192,13 +291,16 @@ if ($ExchangeOnlineConnected) {
 }
 
 if ($GraphConnected) {
-    # --- Create the New User (including required -MailNickname) ---
+    # --- Create the New User (including required -MailNickname, -CompanyName, and name fields) ---
     if ($TestMode) {
         Write-Host "[TEST MODE] Would run New-MgUser -DisplayName '$DisplayName' `
                     -UserPrincipalName '$UPN' `
                     -AccountEnabled `
                     -PasswordProfile @{ Password = $Password; ForceChangePasswordNextSignIn = $false } `
-                    -MailNickname '$MailNickname'"
+                    -MailNickname '$MailNickname' `
+                    -CompanyName 'Shippers-Supply' `
+                    -GivenName '$FirstName' `
+                    -Surname '$LastName'"
         $NewUser   = New-Object PSObject -Property @{ Id = "test-user-id"; UserPrincipalName = $UPN; DisplayName = $DisplayName }
         $NewUserId = $NewUser.Id
     } else {
@@ -207,21 +309,23 @@ if ($GraphConnected) {
                 Password                     = $Password
                 ForceChangePasswordNextSignIn = $false
             }
-            # Corrected: Use -AccountEnabled as a switch (no "$true" after)
+            # Create user with Company field and name fields set
             $NewUser = New-MgUser `
                     -DisplayName       $DisplayName `
                     -UserPrincipalName $UPN `
                     -AccountEnabled `
                     -PasswordProfile   $PasswordProfile `
-                    -MailNickname      $MailNickname
+                    -MailNickname      $MailNickname `
+                    -CompanyName       "Shippers-Supply" `
+                    -GivenName         $FirstName `
+                    -Surname           $LastName
             $NewUserId = $NewUser.Id
-            Write-Host "Created user '$($NewUser.DisplayName)' (ID: $NewUserId)."
+            Write-Host "Created user '$($NewUser.DisplayName)' (ID: $NewUserId) with Company: Shippers-Supply."
         } catch {
             Write-Error "Error creating user: $($_.Exception.Message). Exiting."
             exit 1
         }
     }
-
 
     # --- Immediately Set UsageLocation="US" (Required Before Licensing) ---
     if ($TestMode) {
@@ -233,6 +337,45 @@ if ($GraphConnected) {
         } catch {
             Write-Error "Failed to set UsageLocation: $($_.Exception.Message). Exiting."
             exit 1
+        }
+    }
+
+    # --- Set Manager if Specified ---
+    if ($ManagerId) {
+        Write-Host "Setting manager to: $ManagerUPN"
+        if ($TestMode) {
+            Write-Host "[TEST MODE] Would set manager for user ID $NewUserId to manager ID $ManagerId."
+        } else {
+            try {
+                $ManagerReference = @{
+                    "@odata.id" = "https://graph.microsoft.com/v1.0/users/$ManagerId"
+                }
+                Invoke-MgGraphRequest -Method PUT -Uri "https://graph.microsoft.com/v1.0/users/$NewUserId/manager/`$ref" -Body $ManagerReference
+                Write-Host "Manager set successfully."
+            } catch {
+                Write-Error "Error setting manager: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    # --- Update All User Attributes in Entra ID (Before License Assignment) ---
+    Write-Host "--- Updating user attributes in Entra ID ---"
+    $userProps = @{}
+    if (-not [string]::IsNullOrWhiteSpace($Title))        { $userProps.Add("JobTitle",$Title) }
+    if (-not [string]::IsNullOrWhiteSpace($Department))   { $userProps.Add("Department",$Department) }
+    if (-not [string]::IsNullOrWhiteSpace($MobilePhone))  { $userProps.Add("MobilePhone",$MobilePhone) }
+    if (-not [string]::IsNullOrWhiteSpace($EmployeeType)) { $userProps.Add("EmployeeType",$EmployeeType) }
+
+    if ($userProps.Count -gt 0) {
+        if ($TestMode) {
+            Write-Host "[TEST MODE] Would update user ID $NewUserId with: $($userProps | Out-String)."
+        } else {
+            try {
+                Update-MgUser -UserId $NewUserId -BodyParameter $userProps
+                Write-Host "Updated user attributes: $(($userProps.Keys -join ', '))"
+            } catch {
+                Write-Error "Error updating attributes: $($_.Exception.Message)"
+            }
         }
     }
 
@@ -359,32 +502,43 @@ if ($GraphConnected) {
     $Elapsed       = $ScriptEndTime - $ScriptStartTime
 
     Write-Host "--- Disconnecting from services ---"
-    try {
-        Disconnect-MgGraph
-        Write-Host "Disconnected from Microsoft Graph."
-    } catch {
-        Write-Warning "Error disconnecting Graph: $($_.Exception.Message)"
-    }
-    try {
-        if ($ExchangeOnlineConnected) {
-            Disconnect-ExchangeOnline -Confirm:$false
-            Write-Host "Disconnected from Exchange Online."
+    # Only disconnect if we made the connection in this script
+    if (-not $GraphContext) {
+        try {
+            Disconnect-MgGraph
+            Write-Host "Disconnected from Microsoft Graph."
+        } catch {
+            Write-Warning "Error disconnecting Graph: $($_.Exception.Message)"
         }
-    } catch {
-        Write-Warning "Error disconnecting Exchange: $($_.Exception.Message)"
+    } else {
+        Write-Host "Leaving existing Microsoft Graph connection intact."
+    }
+    
+    # Only disconnect Exchange if we made the connection in this script
+    if (-not ($ExchangeConnection -or ($ExchangeOnlineConnected -and (Get-OrganizationConfig -ErrorAction SilentlyContinue)))) {
+        try {
+            if ($ExchangeOnlineConnected) {
+                Disconnect-ExchangeOnline -Confirm:$false
+                Write-Host "Disconnected from Exchange Online."
+            }
+        } catch {
+            Write-Warning "Error disconnecting Exchange: $($_.Exception.Message)"
+        }
+    } else {
+        Write-Host "Leaving existing Exchange Online connection intact."
     }
 
     Write-Host "Script completed in $([math]::Round($Elapsed.TotalSeconds,2)) seconds."
 } else {
     Write-Warning "Graph connection unavailable; cannot proceed."
 }
-# Add to Company Directory
-$Add-NewUser-CompanyDirectory = Join-Path $PSScriptRoot 'Add-NewUser-CompanyDirectory.ps1'
-& $Add-NewUser-CompanyDirectory -UserPrincipalName $
 
+# Add to Company Directory
+$AddNewUserCompanyDirectory = Join-Path $PSScriptRoot 'Add-NewUser-CompanyDirectory.ps1'
+& $AddNewUserCompanyDirectory -UserPrincipalName $UPN
 
 Write-Host "--- Script complete. ---"
 if ($NewUserId) {
-    $Add-NewUser-LinkWindow = Join-Path $PSScriptRoot 'Add-NewUser-LinkWindow.ps1'
-    & $Add-NewUser-LinkWindow -NewUserId $NewUserId
+    $AddNewUserLinkWindow = Join-Path $PSScriptRoot 'Add-NewUser-LinkWindow.ps1'
+    & $AddNewUserLinkWindow -NewUserId $NewUserId
 }

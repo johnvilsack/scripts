@@ -4,7 +4,7 @@ param(
 
 # Determine path to CSV (assumes Links-NewUser.csv sits alongside this script)
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$csvPath   = Join-Path $scriptDir 'Show-LinkWindow.csv'
+$csvPath   = Join-Path $scriptDir 'Add-NewUser-LinkWindow.csv'
 
 if (-not (Test-Path $csvPath)) {
     Write-Error "Could not find file: $csvPath"

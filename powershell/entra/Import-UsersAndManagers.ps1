@@ -1,9 +1,9 @@
 # AzureAD-Import.ps1 - Simple script that runs when executed
-# This script imports manager and department updates from the edited CSV
+# This script imports manager, department, and job title updates from the edited CSV
 
 #Requires -Modules Microsoft.Graph.Users
 
-Write-Host "Starting Azure AD Manager & Department Import..." -ForegroundColor Green
+Write-Host "Starting Azure AD Manager, Department & Job Title Import..." -ForegroundColor Green
 
 # Check if CSV exists
 $csvPath = "./AzureAD_Users_Managers.csv"
@@ -26,7 +26,7 @@ $usersToUpdate = $userData | Where-Object { $_.Action -eq "Update" }
 $usersToRemove = $userData | Where-Object { $_.Action -eq "Remove" }
 
 Write-Host "📊 Found:" -ForegroundColor Cyan
-Write-Host "  - $($usersToUpdate.Count) users to update (manager/department)" -ForegroundColor Cyan
+Write-Host "  - $($usersToUpdate.Count) users to update (manager/department/job title)" -ForegroundColor Cyan
 Write-Host "  - $($usersToRemove.Count) managers to remove" -ForegroundColor Cyan
 
 if ($usersToUpdate.Count -eq 0 -and $usersToRemove.Count -eq 0) {
@@ -38,7 +38,7 @@ if ($usersToUpdate.Count -eq 0 -and $usersToRemove.Count -eq 0) {
 $successCount = 0
 $errorCount = 0
 
-# Process manager updates
+# Process user updates
 Write-Host "`n🔄 Processing user updates..." -ForegroundColor Green
 foreach ($user in $usersToUpdate) {
     try {
@@ -69,6 +69,12 @@ foreach ($user in $usersToUpdate) {
         if (-not [string]::IsNullOrWhiteSpace($user.NewDepartment) -and $user.NewDepartment -ne $user.CurrentDepartment) {
             $updateParams['Department'] = $user.NewDepartment
             $updates += "Department: $($user.NewDepartment)"
+        }
+        
+        # Check if job title needs updating
+        if (-not [string]::IsNullOrWhiteSpace($user.NewJobTitle) -and $user.NewJobTitle -ne $user.CurrentJobTitle) {
+            $updateParams['JobTitle'] = $user.NewJobTitle
+            $updates += "Job Title: $($user.NewJobTitle)"
         }
         
         # Update user properties if needed
@@ -113,4 +119,4 @@ Write-Host "❌ Errors: $errorCount" -ForegroundColor Red
 # Disconnect
 Disconnect-MgGraph
 
-Write-Host "`n🎉 Manager & Department import completed!" -ForegroundColor Green
+Write-Host "`n🎉 Manager, Department & Job Title import completed!" -ForegroundColor Green

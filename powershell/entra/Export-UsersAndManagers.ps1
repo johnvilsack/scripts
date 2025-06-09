@@ -41,13 +41,15 @@ foreach ($user in $users) {
         UserPrincipalName = $user.UserPrincipalName
         UserDisplayName = $user.DisplayName
         UserObjectId = $user.Id
-        JobTitle = $user.JobTitle
-        Department = $user.Department
+        CurrentJobTitle = $user.JobTitle
+        CurrentDepartment = $user.Department
         CurrentManagerUPN = $managerUPN
         CurrentManagerDisplayName = $managerDisplayName
         CurrentManagerObjectId = $managerId
-        NewManagerUPN = $managerUPN  # Edit this column
-        Action = "NoChange"  # Change to "Update" or "Remove"
+        NewJobTitle = $user.JobTitle           # Edit this column for title changes
+        NewDepartment = $user.Department       # Edit this column for department changes
+        NewManagerUPN = $managerUPN            # Edit this column for manager changes
+        Action = "NoChange"                    # Change to "Update" or "Remove"
     }
     
     # Show progress
@@ -66,9 +68,12 @@ Write-Host "👥 Total users: $($results.Count)" -ForegroundColor Green
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Cyan
 Write-Host "1. Edit the CSV file" -ForegroundColor Cyan
-Write-Host "2. Update 'NewManagerUPN' column with correct managers" -ForegroundColor Cyan
-Write-Host "3. Set 'Action' to 'Update' for users to change" -ForegroundColor Cyan
-Write-Host "4. Run the import script" -ForegroundColor Cyan
+Write-Host "2. Update 'NewJobTitle' column with new job titles" -ForegroundColor Cyan
+Write-Host "3. Update 'NewDepartment' column with new departments" -ForegroundColor Cyan
+Write-Host "4. Update 'NewManagerUPN' column with correct managers" -ForegroundColor Cyan
+Write-Host "5. Set 'Action' to 'Update' for users to change" -ForegroundColor Cyan
+Write-Host "6. Set 'Action' to 'Remove' to remove manager assignment" -ForegroundColor Cyan
+Write-Host "7. Run the import script" -ForegroundColor Cyan
 
 # Disconnect
 Disconnect-MgGraph
