@@ -6,3 +6,6 @@ shell/google/token.json
 powershell/secrets/pnp-powershell.clientid
 powershell/entra/AzureAD_Users_Managers.csv
 powershell/sharepoint/SharePointDeletions.csv
+powershell/acumatica/.acumatica.env
+powershell/acumatica/Get-Employees.csv
+powershell/acumatica/Audit-Employees.csv
